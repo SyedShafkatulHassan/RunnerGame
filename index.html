@@ -1,0 +1,115 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <title>Shafkat Runner — Free Endless Runner Game | 1 or 2 Players, No Download</title>
+  <meta name="description" content="Play Shafkat Runner free in your browser: tap to jump across neon rooftops, dodge drones and grab orbs. Play solo or race a friend in 2-player mode.">
+  <meta name="theme-color" content="#140f2e">
+  <link rel="icon" href="favicon.svg" type="image/svg+xml">
+
+  <meta property="og:title" content="Shafkat Runner — Endless Rooftop Runner">
+  <meta property="og:description" content="Tap to jump. Play solo or race a friend on the same screen.">
+  <meta property="og:type" content="website">
+
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Fredoka:wght@500;600;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="style.css">
+
+  <!-- GOOGLE ADSENSE: once approved, paste your AdSense <script> tag here. -->
+</head>
+<body>
+  <header class="topbar">
+    <a class="logo" href="/" aria-label="Shafkat Runner home">Shafkat<span>Runner</span></a>
+    <div class="top-actions">
+      <button class="icon-btn" id="pause-btn" aria-label="Pause" title="Pause (P)">
+        <svg viewBox="0 0 24 24" width="20" height="20" aria-hidden="true"><path fill="currentColor" d="M7 5h4v14H7zM13 5h4v14h-4z"/></svg>
+      </button>
+      <button class="icon-btn" id="sound-btn" aria-label="Mute sound" title="Sound (M)">
+        <svg class="ico-on" viewBox="0 0 24 24" width="20" height="20" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4.5 10h3l4.5-3.5v11L7.5 14h-3z" fill="currentColor"/><path d="M15.5 9.5c1.1 1.4 1.1 3.6 0 5"/><path d="M18.2 7c2.4 2.8 2.4 7.2 0 10"/></svg>
+        <svg class="ico-off" viewBox="0 0 24 24" width="20" height="20" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4.5 10h3l4.5-3.5v11L7.5 14h-3z" fill="currentColor"/><path d="M15.5 9.5l5 5M20.5 9.5l-5 5"/></svg>
+      </button>
+    </div>
+  </header>
+
+  <main class="wrap">
+    <div class="game" id="game" role="application"
+         aria-label="Shafkat Runner game. One player: Space, Up arrow or tap to jump. Two players: Player 1 presses W or taps the top half, Player 2 presses Up or taps the bottom half.">
+      <canvas id="canvas"></canvas>
+
+      <div class="hud" id="hud" aria-hidden="true">
+        <div class="hud-item">Score <b id="score">0</b></div>
+        <div class="hud-item">Best <b id="best">0</b></div>
+      </div>
+
+      <div class="screen" id="start-screen">
+        <h1 class="title">Shafkat<span>Runner</span></h1>
+        <p class="lead">Run across the rooftops as far as you can — solo, or race a friend on the same device.</p>
+        <div class="actions">
+          <button class="btn primary big" id="solo-btn">1 Player</button>
+          <button class="btn alt big" id="versus-btn">2 Players</button>
+        </div>
+        <ul class="howto">
+          <li><b>1 Player:</b> tap or <kbd>Space</kbd> to jump · hold for higher · tap again in the air to double jump</li>
+          <li><b>2 Players:</b> <span class="p1">P1</span> <kbd>W</kbd> or tap the top half · <span class="p2">P2</span> <kbd>↑</kbd> or tap the bottom half</li>
+        </ul>
+      </div>
+
+      <div class="screen" id="over-screen" hidden>
+        <p class="over-title" id="over-title">Game over</p>
+        <div id="solo-result">
+          <p class="new-best" id="new-best" hidden>⭐ New best!</p>
+          <div class="final"><span id="final-score">0</span><small>points</small></div>
+          <p class="final-best">Best <b id="final-best">0</b></p>
+        </div>
+        <div class="vs-result" id="vs-result" hidden>
+          <div class="vs-row" id="vs-row1"><span class="dot p1"></span>Player 1<b id="vs-s1">0</b></div>
+          <div class="vs-row" id="vs-row2"><span class="dot p2"></span>Player 2<b id="vs-s2">0</b></div>
+          <p class="tally">Matches won: <b id="vs-tally">0 – 0</b></p>
+        </div>
+        <div class="actions">
+          <button class="btn primary" id="again-btn">Play again</button>
+          <button class="btn ghost" id="menu-btn">Change mode</button>
+          <button class="btn ghost" id="share-btn">Share</button>
+        </div>
+      </div>
+
+      <div class="screen" id="pause-screen" hidden>
+        <p class="over-title">Paused</p>
+        <button class="btn primary" id="resume-btn">Resume</button>
+      </div>
+    </div>
+
+    <p class="hint">1 Player: Space / ↑ / W or tap · 2 Players: P1 <kbd>W</kbd>, P2 <kbd>↑</kbd> · P to pause · M to mute</p>
+
+    <!-- AD SLOT: after AdSense approval, place a responsive ad unit HERE, below the game.
+         Never put ads inside or touching the game area (accidental taps break AdSense rules). -->
+
+    <section class="content">
+      <h2>How to play Shafkat Runner</h2>
+      <p>Shafkat Runner is a free endless runner you can play in your browser. Bolt the robot runs automatically across a neon city skyline, and your job is to time the jumps. The run gets faster the further you go.</p>
+      <ul>
+        <li><strong>Jump</strong> over crates and vents, and across the gaps between rooftops.</li>
+        <li><strong>Hold</strong> the jump for more height, or tap quickly for a short hop.</li>
+        <li><strong>Double jump</strong> once in mid-air to save a bad jump or clear a wide gap.</li>
+        <li><strong>Drones</strong> hover at head height: stay on the ground and run underneath them.</li>
+        <li><strong>Energy orbs</strong> give bonus points.</li>
+        <li><strong>2-player mode:</strong> race a friend on the same phone or computer. You both get exactly the same course, and the higher score wins.</li>
+      </ul>
+      <p><a href="how-to-play.html">Full guide and tips →</a></p>
+    </section>
+
+  </main>
+
+  <footer class="footer">
+    <a href="how-to-play.html">How to play</a>
+    <a href="about.html">About</a>
+    <a href="privacy.html">Privacy</a>
+  </footer>
+
+  <div class="toast" id="toast" role="status" aria-live="polite"></div>
+
+  <script src="game.js"></script>
+</body>
+</html>
