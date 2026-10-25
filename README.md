@@ -4,6 +4,8 @@ A front-end-only browser game, built with `<canvas>` and plain JavaScript. It ha
 
 You play as Bolt the robot, who runs across neon rooftops on his own. You tap or press Space to jump: hold for a higher jump, and tap again in mid-air for a double jump. You jump over crates, vents and gaps, run under drones, and collect energy orbs. The game speeds up as you go. Your best score is saved in `localStorage`.
 
+**Difficulty levels:** Easy, Medium and Hard, chosen on the start screen. They apply to both modes, are remembered, and keep separate best scores. Edit the `LEVELS` table at the top of `game.js` to tune start speed, top speed, acceleration, how soon each obstacle appears (`*At`), and the reaction window after each landing (`react`).
+
 **2-player mode** (same device): the screen splits into two lanes. Player 1 presses W or taps the top half, and Player 2 presses ↑ or taps the bottom half. Both run the same seeded course, and the higher score wins. There is a 3-second countdown, a winner screen, and a match tally for the session. There's also a pause button (which also triggers automatically when the tab is hidden), a mute toggle, and a share button for your score.
 
 ## Files
@@ -28,10 +30,10 @@ To test locally, run `python3 -m http.server 8000` and open http://localhost:800
 
 **Copyright and trademarks**
 - The character, art, sounds and name are original. Every graphic is drawn in code and every sound is synthesised, so there are no third-party assets to license.
-- The font is Fredoka from Google Fonts, under the SIL Open Font Licence, which allows free commercial use.
-- Don't add sprites, music or sound effects downloaded from the internet unless the licence allows commercial use. CC0 assets from kenney.nl are safe.
+- No fonts are bundled or downloaded: text uses the fonts already installed on the player's device.
+- Don't add sprites, music, fonts or sound effects from the internet. Keep everything drawn or generated in code.
 - Before you invest in branding, search the name "Shafkat Runner" on the USPTO trademark search (tmsearch.uspto.gov) and the app stores. If it's taken, rename it: change the logo text in each HTML file and the `<title>` tags.
-- Don't describe the game as "like Flappy Bird" or "Chrome Dino" in titles or ads. Describe it on its own terms.
+- Describe the game on its own terms; don't compare it to other named games in titles or ads.
 
 **Google AdSense**
 - Put ads **below** the game, never inside or overlapping the play area. An ad next to the tap zone causes accidental clicks, which is a policy violation and can get your account banned.

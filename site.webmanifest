@@ -1,0 +1,14 @@
+{
+  "name": "Shafkat Runner",
+  "short_name": "Shafkat Runner",
+  "description": "Free endless runner game. Play solo or race a friend.",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#0d0a22",
+  "theme_color": "#140f2e",
+  "icons": [
+    { "src": "icon-192.png", "sizes": "192x192", "type": "image/png" },
+    { "src": "icon-512.png", "sizes": "512x512", "type": "image/png" },
+    { "src": "favicon.svg", "sizes": "any", "type": "image/svg+xml" }
+  ]
+}

@@ -17,13 +17,39 @@
   const DOUBLE_V = 720;        // mid-air jump
   const CUT_V = 460;           // releasing early caps the upward speed -> short hop
   const MAX_FALL = 1500;
-  const START_SPEED = 380;
-  const MAX_SPEED = 900;
-  const ACCEL = 8;             // speed gained per second
+  const START_SPEED = 380;     // reference speed used to size gaps
   const COYOTE = 0.09;         // can still jump this long after running off an edge
   const BUFFER = 0.12;         // a press this early before landing still counts
   const STEP = 1 / 120;        // fixed physics step
   const COUNTDOWN = 3;         // seconds before a 2-player race starts
+
+  // Difficulty presets. "ramp" = distance until obstacles reach full difficulty;
+  // "react" = seconds of free running after you land, before the next obstacle (min, max);
+  // "*At" = difficulty (0..1) at which that obstacle type starts appearing.
+  const LEVELS = {
+    easy:   { label: 'Easy',   start: 320, max: 650,  accel: 5,  ramp: 14000, react: [0.35, 0.65], ventAt: 0.15, wideAt: 0.25, droneAt: 0.4, power: 0.13 },
+    medium: { label: 'Medium', start: 380, max: 900,  accel: 8,  ramp: 9000,  react: [0.22, 0.45], ventAt: 0.08, wideAt: 0.12, droneAt: 0.2, power: 0.1 },
+    hard:   { label: 'Hard',   start: 450, max: 1000, accel: 11, ramp: 6000,  react: [0.14, 0.32], ventAt: 0,    wideAt: 0.03, droneAt: 0.05, power: 0.08 },
+  };
+  const LANDING = 0.6;         // a full jump lands about this many seconds of running past an obstacle
+  const PAD_V = 1050;          // jump-pad launch speed (a much higher, longer jump)
+
+  // Power-ups float just above head height, so you hop to grab them.
+  const POWERS = {
+    shield: { label: 'Shield', color: '#60a5fa', time: 0 },   // lasts until it saves you once
+    magnet: { label: 'Magnet', color: '#f87171', time: 8 },
+    double: { label: '2× points', color: '#fbbf24', time: 8 },
+  };
+  const POWER_KINDS = ['shield', 'magnet', 'double'];
+  const MILESTONE = 1000;      // banner every this many points
+
+  // Robot colours for Player 1, unlocked by your best score on any level.
+  const SKINS = [
+    { id: 'teal',   label: 'Teal',   need: 0,    body: '#2dd4bf', dark: '#14b8a6', legs: '#0f766e', eye: '#67e8f9', antenna: '#99f6e4' },
+    { id: 'violet', label: 'Violet', need: 1500, body: '#a78bfa', dark: '#7c3aed', legs: '#4c1d95', eye: '#e9d5ff', antenna: '#ddd6fe' },
+    { id: 'lime',   label: 'Lime',   need: 3000, body: '#a3e635', dark: '#65a30d', legs: '#365314', eye: '#ecfccb', antenna: '#d9f99d' },
+    { id: 'gold',   label: 'Gold',   need: 6000, body: '#facc15', dark: '#ca8a04', legs: '#713f12', eye: '#fef9c3', antenna: '#fde68a' },
+  ];
   const NS = 'shafkat-runner:v1:';
 
   const LOOKS = [
@@ -50,6 +76,8 @@
     finalScore: $('final-score'), finalBest: $('final-best'), newBest: $('new-best'),
     vsS1: $('vs-s1'), vsS2: $('vs-s2'), vsRow1: $('vs-row1'), vsRow2: $('vs-row2'), vsTally: $('vs-tally'),
     pauseBtn: $('pause-btn'), soundBtn: $('sound-btn'), toast: $('toast'),
+    levelBtns: document.querySelectorAll('.levels button'), levelTag: $('level-tag'),
+    skinList: $('skin-list'), skinHint: $('skin-hint'),
   };
 
   // ---------- Random numbers ----------
@@ -116,24 +144,48 @@
   const farCity = makeSkyline(26, 70, 170, 40, 90, 0.12);
   const nearCity = makeSkyline(22, 50, 120, 50, 110, 0.18);
   const stars = Array.from({ length: 60 }, () => [fx(0, 1600), fx(0, 180), fx(0.4, 1.8)]);
-  const skyGrad = ctx.createLinearGradient(0, 0, 0, GROUND + 40);
-  skyGrad.addColorStop(0, '#120c33');
-  skyGrad.addColorStop(0.55, '#3b1d6e');
-  skyGrad.addColorStop(1, '#c2537a');
+  // Sky colours cycle dusk -> night -> dawn as you run.
+  const SKY = [
+    ['#120c33', '#3b1d6e', '#c2537a'],   // dusk
+    ['#04030d', '#120e30', '#2a1c58'],   // night
+    ['#1d2b63', '#5b5bb3', '#f59e7b'],   // dawn
+  ];
+  const SKY_LEN = 15000;  // distance per sky phase
+  const hexRgb = (h) => [1, 3, 5].map((i) => parseInt(h.slice(i, i + 2), 16));
+  const mixHex = (a, b, t) => {
+    const A = hexRgb(a), B = hexRgb(b);
+    return `rgb(${A.map((v, i) => Math.round(v + (B.at(i) - v) * t)).join(',')})`;
+  };
+  function skyAt(cam) {
+    const c = (cam / SKY_LEN) % SKY.length;
+    const i = Math.floor(c);
+    const f = c - i;
+    const e = f * f * (3 - 2 * f);                  // smooth blend
+    const a = SKY.at(i), b = SKY.at((i + 1) % SKY.length);
+    const g = ctx.createLinearGradient(0, 0, 0, GROUND + 40);
+    g.addColorStop(0, mixHex(a[0], b[0], e));
+    g.addColorStop(0.55, mixHex(a[1], b[1], e));
+    g.addColorStop(1, mixHex(a[2], b[2], e));
+    const night = i === 0 ? e : i === 1 ? 1 - e : 0;
+    return { g, night };
+  }
 
   // =============================================================
   // A "run" = one player's world: their robot, their copy of the course
   // =============================================================
   function makeRun(seed, view, look) {
+    const lvl = LEVELS[level];
     return {
-      rng: makeRng(seed), view, look,
-      cam: 0, elapsed: 0, orbScore: 0, speed: START_SPEED * view.speedScale,
+      rng: makeRng(seed), view, look, lvl,
+      cam: 0, elapsed: 0, bonus: 0, speed: lvl.start * view.speedScale,
       player: { y: GROUND - PH, vy: 0, onGround: true, jumps: 0, runT: 0, squash: 0 },
       segments: [], segStart: -400, genX: 700, obstacles: [], orbs: [], particles: [],
       alive: true, held: false, coyote: 0, buffer: 0, deathTime: 0, shake: 0,
+      items: [], popups: [], banner: null, nextMilestone: MILESTONE,
+      shield: false, magnetT: 0, doubleT: 0, invulnT: 0, combo: 0, comboT: 0,
     };
   }
-  const scoreOf = (r) => Math.floor(r.cam / 10) + r.orbScore;
+  const scoreOf = (r) => Math.floor(r.cam / 10 + r.bonus);
 
   // ---------- Level generator (uses the run's own seeded rng) ----------
   function addOrbArc(r, x1, x2, baseY, peak, n) {
@@ -146,15 +198,17 @@
   function generate(r) {
     const rand = (a, b) => a + r.rng() * (b - a);
     while (r.genX < r.cam + r.view.W + 400) {
-      const d = Math.min(1, r.cam / 9000);     // difficulty 0..1
+      const L = r.lvl;
+      const d = Math.min(1, r.cam / L.ramp);   // difficulty 0..1
       const v = r.speed + 30;
       const roll = r.rng();
       let pattern;
       if (roll < 0.26) pattern = 'crate';
-      else if (roll < 0.38 && d > 0.12) pattern = 'wide';
+      else if (roll < 0.38 && d >= L.wideAt) pattern = 'wide';
       else if (roll < 0.56) pattern = 'gap';
-      else if (roll < 0.70 && d > 0.08) pattern = 'vent';
-      else if (roll < 0.84 && d > 0.2) pattern = 'drone';
+      else if (roll < 0.70 && d >= L.ventAt) pattern = 'vent';
+      else if (roll < 0.84 && d >= L.droneAt) pattern = 'drone';
+      else if (roll < 0.92 && d >= 0.05) pattern = 'pad';
       else pattern = 'orbs';
 
       switch (pattern) {
@@ -192,12 +246,26 @@
           r.genX += 44;
           break;
         }
+        case 'pad': {
+          // A spring pad: stepping on it launches you high through a trail of orbs.
+          const flight = 2 * PAD_V / GRAVITY;                 // seconds in the air
+          r.obstacles.push({ type: 'pad', x: r.genX, w: 36, h: 10, y: GROUND - 10 });
+          addOrbArc(r, r.genX + 30, r.genX + v * flight, GROUND - PH / 2, 215, 8);
+          r.genX += 36 + v * (flight - LANDING + 0.05);      // extra room for the longer flight
+          break;
+        }
         default: {
           addOrbArc(r, r.genX, r.genX + 180, GROUND - 24, r.rng() < 0.5 ? 0 : 70, 6);
           r.genX += 180;
         }
       }
-      r.genX += v * rand(0.55, 0.85) + 70 * (1 - d); // safe runway before the next challenge
+      // Room to land from a full jump, then a reaction window before the next challenge.
+      const runway = v * (LANDING + rand(L.react[0], L.react[1])) + 70 * (1 - d);
+      if (r.rng() < L.power) {
+        const kind = POWER_KINDS[Math.floor(r.rng() * POWER_KINDS.length)];
+        r.items.push({ kind, x: r.genX + runway * 0.55, y: GROUND - 64, r: 14 });
+      }
+      r.genX += runway;
     }
   }
 
@@ -239,7 +307,15 @@
     orb: () => tone(900, 1400, 0.09, 'sine', 0.06),
     crash: () => tone(240, 50, 0.45, 'sawtooth', 0.07),
     beep: (hi) => tone(hi ? 880 : 520, hi ? 880 : 520, 0.15, 'sine', 0.07),
+    power: () => { tone(520, 1040, 0.16, 'triangle', 0.07); setTimeout(() => tone(780, 1560, 0.14, 'triangle', 0.05), 90); },
+    shield: () => tone(420, 160, 0.3, 'square', 0.05),
+    pad: () => tone(180, 900, 0.28, 'sine', 0.08),
+    milestone: () => { tone(660, 660, 0.1, 'triangle', 0.06); setTimeout(() => tone(990, 990, 0.16, 'triangle', 0.06), 110); },
   };
+
+  function popup(r, x, y, text, color, size) {
+    r.popups.push({ x, y, text, color: color || '#fde68a', size: size || 18, life: 0.9, max: 0.9 });
+  }
 
   // ---------- Particles ----------
   function burst(r, x, y, n, color, spread, up) {
@@ -286,9 +362,15 @@
   function update(r, dt) {
     const v = r.view;
     r.elapsed += dt;
-    r.speed = Math.min(MAX_SPEED, START_SPEED + ACCEL * r.elapsed) * v.speedScale;
+    r.speed = Math.min(r.lvl.max, r.lvl.start + r.lvl.accel * r.elapsed) * v.speedScale;
     r.cam += r.speed * dt;
     generate(r);
+    r.magnetT = Math.max(0, r.magnetT - dt);
+    r.doubleT = Math.max(0, r.doubleT - dt);
+    r.invulnT = Math.max(0, r.invulnT - dt);
+    r.comboT = Math.max(0, r.comboT - dt);
+    if (r.comboT === 0) r.combo = 0;
+    if (r.doubleT > 0) r.bonus += r.speed * dt / 10; // distance counts double
 
     const p = r.player;
     const wx = r.cam + v.PX;
@@ -316,6 +398,16 @@
     } else {
       if (p.onGround && !support) p.onGround = false; // ran off an edge
       if (!p.onGround) r.coyote = Math.max(0, r.coyote - dt);
+      if (!support && r.shield && p.vy > 0 && feet > GROUND + 20) {
+        // Shield saves a fall: bounce back up, with a double jump available.
+        r.shield = false;
+        r.invulnT = 0.8;
+        p.vy = -JUMP_V * 1.15;
+        p.jumps = 1;
+        burst(r, wx + PW / 2, p.y + PH, 16, POWERS.shield.color, 140, 200);
+        popup(r, wx + PW / 2, p.y - 10, 'Saved!', POWERS.shield.color, 22);
+        sfx.shield();
+      }
       if (support && feet > GROUND + 26) return die(r); // hit the side of a rooftop
     }
     r.buffer = Math.max(0, r.buffer - dt);
@@ -327,28 +419,91 @@
     // Obstacles (hitbox a little smaller than the drawing, to feel fair)
     const x1 = wx + 6, x2 = wx + PW - 6, y1 = p.y + 5, y2 = p.y + PH - 2;
     for (const o of r.obstacles) {
-      if (o.x > x2 || o.x + o.w < x1) continue;
+      if (o.smashed || o.x > x2 || o.x + o.w < x1) continue;
+      if (o.type === 'pad') {
+        if (p.onGround && x2 > o.x + 4 && x1 < o.x + o.w - 4) {
+          p.vy = -PAD_V;
+          p.onGround = false;
+          p.jumps = 1;
+          r.coyote = 0;
+          p.squash = -0.25;
+          o.used = 1;
+          r.padCount = (r.padCount || 0) + 1;
+          burst(r, wx + PW / 2, GROUND, 14, '#4ade80', 90, 260);
+          sfx.pad();
+        }
+        continue;
+      }
       const oy = o.type === 'drone' ? o.y + Math.sin(o.phase + r.elapsed * 4) * 3 : o.y;
       const pad = o.type === 'drone' ? 4 : 2;
-      if (y2 > oy + pad && y1 < oy + o.h - pad && x2 > o.x + pad && x1 < o.x + o.w - pad) return die(r);
+      if (y2 > oy + pad && y1 < oy + o.h - pad && x2 > o.x + pad && x1 < o.x + o.w - pad) {
+        if (r.invulnT > 0) continue;
+        if (r.shield) {
+          // Shield breaks the obstacle instead of you.
+          r.shield = false;
+          r.invulnT = 0.8;
+          o.smashed = true;
+          burst(r, o.x + o.w / 2, oy + o.h / 2, 18, POWERS.shield.color, 200, 260);
+          popup(r, wx + PW / 2, p.y - 10, 'Shield!', POWERS.shield.color, 22);
+          sfx.shield();
+          continue;
+        }
+        return die(r);
+      }
     }
 
-    // Orbs
+    // Orbs (the magnet pulls nearby orbs towards you)
+    const pcx = wx + PW / 2, pcy = p.y + PH / 2;
     for (let i = r.orbs.length - 1; i >= 0; i--) {
       const o = r.orbs[i];
+      if (r.magnetT > 0 && Math.abs(o.x - pcx) < 230) {
+        const k = Math.min(1, dt * 9);
+        o.x += (pcx - o.x) * k;
+        o.y += (pcy - o.y) * k;
+      }
       const cx = Math.max(x1, Math.min(o.x, x2));
       const cy = Math.max(y1, Math.min(o.y, y2));
       if ((o.x - cx) ** 2 + (o.y - cy) ** 2 < (o.r + 2) ** 2) {
         r.orbs.splice(i, 1);
-        r.orbScore += 25;
+        r.combo = r.comboT > 0 ? Math.min(5, r.combo + 1) : 1;  // quick orbs build a combo
+        r.comboT = 1.4;
+        const pts = 25 * r.combo * (r.doubleT > 0 ? 2 : 1);
+        r.bonus += pts;
+        popup(r, o.x, o.y - 12, r.combo > 1 ? `+${pts} ×${r.combo}` : `+${pts}`, r.combo > 1 ? '#fbbf24' : '#fde68a', r.combo > 1 ? 20 : 16);
         burst(r, o.x, o.y, 8, '#fde68a', 90, 120);
         sfx.orb();
       }
     }
 
+    // Power-ups
+    for (let i = r.items.length - 1; i >= 0; i--) {
+      const it = r.items[i];
+      const cx = Math.max(x1, Math.min(it.x, x2));
+      const cy = Math.max(y1, Math.min(it.y, y2));
+      if ((it.x - cx) ** 2 + (it.y - cy) ** 2 < (it.r + 2) ** 2) {
+        r.items.splice(i, 1);
+        const P = POWERS[it.kind];
+        if (it.kind === 'shield') r.shield = true;
+        else if (it.kind === 'magnet') r.magnetT = P.time;
+        else r.doubleT = P.time;
+        popup(r, it.x, it.y - 18, P.label + '!', P.color, 22);
+        burst(r, it.x, it.y, 16, P.color, 140, 160);
+        sfx.power();
+        r.powerCount = (r.powerCount || 0) + 1;
+      }
+    }
+
+    // Milestone banner every 1,000 points
+    if (scoreOf(r) >= r.nextMilestone) {
+      r.banner = { text: r.nextMilestone.toLocaleString() + '!', life: 1.4, max: 1.4 };
+      r.nextMilestone += MILESTONE;
+      sfx.milestone();
+    }
+
     const left = r.cam - 120;
     r.obstacles = r.obstacles.filter((o) => o.x + o.w > left);
     r.orbs = r.orbs.filter((o) => o.x > left);
+    r.items = r.items.filter((it) => it.x > left);
     r.segments = r.segments.filter((s) => s.x2 > left);
   }
 
@@ -360,6 +515,9 @@
       q.y += q.vy * dt;
     }
     r.particles = r.particles.filter((q) => q.life > 0);
+    for (const q of r.popups) { q.life -= dt; q.y -= 46 * dt; }
+    r.popups = r.popups.filter((q) => q.life > 0);
+    if (r.banner) { r.banner.life -= dt; if (r.banner.life <= 0) r.banner = null; }
     r.shake = Math.max(0, r.shake - dt);
   }
 
@@ -372,7 +530,45 @@
   let countdown = 0;
   let lastBeep = -1;
   let overTimer = null;
-  let best = store.get('best', 0);
+  let level = LEVELS[store.get('level', 'medium')] ? store.get('level', 'medium') : 'medium';
+  const bestFor = (lv) => store.get('best-' + lv, lv === 'medium' ? store.get('best', 0) : 0);
+  let best = bestFor(level);
+
+  // ---------- Robot colours (unlocked by best score on any level) ----------
+  let skin = store.get('skin', 'teal');
+  const topBest = () => Math.max(...Object.keys(LEVELS).map(bestFor));
+  const isUnlocked = (sk) => sk.need <= topBest();
+  function p1Look() {
+    const sk = SKINS.find((x) => x.id === skin && isUnlocked(x)) || SKINS[0];
+    return { ...sk, name: 'Player 1' };
+  }
+  function renderSkins() {
+    if (!ui.skinList) return;
+    ui.skinList.textContent = '';
+    for (const sk of SKINS) {
+      const open = isUnlocked(sk);
+      const b = document.createElement('button');
+      b.type = 'button';
+      b.className = 'skin';
+      b.style.setProperty('--c', sk.body);
+      b.disabled = !open;
+      b.setAttribute('aria-pressed', String(open && p1Look().id === sk.id));
+      b.setAttribute('aria-label', open ? `${sk.label} robot` : `${sk.label} robot, locked until ${sk.need.toLocaleString()} points`);
+      b.title = open ? sk.label : `Locked: score ${sk.need.toLocaleString()} on any level`;
+      if (!open) b.classList.add('locked');
+      b.addEventListener('click', () => {
+        skin = sk.id;
+        store.set('skin', skin);
+        renderSkins();
+        if (state === 'menu' && runs[0]) runs[0].look = p1Look();
+      });
+      ui.skinList.appendChild(b);
+    }
+    const next = SKINS.find((x) => !isUnlocked(x));
+    ui.skinHint.textContent = next
+      ? `Score ${next.need.toLocaleString()} on any level to unlock ${next.label}.`
+      : 'All robot colours unlocked!';
+  }
   const tally = [0, 0]; // 2-player wins this session
   const pointerOwner = new Map();
 
@@ -386,7 +582,7 @@
     clearTimeout(overTimer);
     setMode(m);
     const seed = randomSeed();
-    runs = views.map((v, i) => makeRun(seed, v, LOOKS[i]));
+    runs = views.map((v, i) => makeRun(seed, v, i === 0 ? p1Look() : LOOKS[1]));
     ui.start.hidden = true;
     ui.over.hidden = true;
     ui.pause.hidden = true;
@@ -411,7 +607,7 @@
     ui.start.hidden = false;
     ui.pauseBtn.disabled = true;
     setMode('solo');
-    runs = [makeRun(randomSeed(), views[0], LOOKS[0])];
+    runs = [makeRun(randomSeed(), views[0], p1Look())];
     ui.soloBtn.focus({ preventScroll: true });
   }
 
@@ -428,10 +624,18 @@
   function endMatch() {
     state = 'over';
     ui.pauseBtn.disabled = true;
+    ui.levelTag.textContent = `${LEVELS[level].label} mode`;
+    ui.levelTag.dataset.level = level;
     if (mode === 'solo') {
       const score = scoreOf(runs[0]);
       const isBest = score > best;
-      if (isBest) { best = score; store.set('best', best); }
+      const topBefore = topBest();
+      if (isBest) { best = score; store.set('best-' + level, best); }
+      const unlocked = SKINS.filter((sk) => sk.need > topBefore && sk.need <= topBest());
+      if (unlocked.length) {
+        renderSkins();
+        setTimeout(() => toast(`New robot colour unlocked: ${unlocked.at(-1).label}!`), 900);
+      }
       ui.overTitle.textContent = 'Game over';
       ui.finalScore.textContent = score.toLocaleString();
       ui.finalBest.textContent = best.toLocaleString();
@@ -548,7 +752,23 @@
   }
 
   function drawObstacle(r, o, t) {
+    if (o.smashed) return;
     const x = o.x - r.cam;
+    if (o.type === 'pad') {
+      const glow = 0.5 + 0.5 * Math.sin(t * 8 + o.x);
+      ctx.fillStyle = '#334155';
+      roundRect(x, GROUND - 8, o.w, 8, 3); ctx.fill();
+      ctx.fillStyle = `rgba(74,222,128,${0.55 + 0.45 * glow})`;
+      roundRect(x + 3, GROUND - 13, o.w - 6, 6, 3); ctx.fill();
+      ctx.strokeStyle = '#bbf7d0';
+      ctx.lineWidth = 2.5;
+      const cx = x + o.w / 2, lift = glow * 4;
+      ctx.beginPath();
+      ctx.moveTo(cx - 7, GROUND - 20 - lift); ctx.lineTo(cx, GROUND - 27 - lift); ctx.lineTo(cx + 7, GROUND - 20 - lift);
+      ctx.moveTo(cx - 7, GROUND - 28 - lift); ctx.lineTo(cx, GROUND - 35 - lift); ctx.lineTo(cx + 7, GROUND - 28 - lift);
+      ctx.stroke();
+      return;
+    }
     if (o.type === 'crate') {
       for (let cx = 0; cx < o.w; cx += 40) {
         const bx = x + cx;
@@ -598,9 +818,10 @@
     ctx.save();
     if (r.shake > 0) ctx.translate(fx(-1, 1) * r.shake * 14, fx(-1, 1) * r.shake * 14);
 
-    ctx.fillStyle = skyGrad;
+    const sky = skyAt(cam);
+    ctx.fillStyle = sky.g;
     ctx.fillRect(-20, -20, W + 40, H + 40);
-    ctx.fillStyle = 'rgba(255,255,255,.7)';
+    ctx.fillStyle = `rgba(255,255,255,${0.35 + 0.55 * sky.night})`;
     for (const [sx, sy, sr] of stars) {
       const x = ((sx - cam * 0.03) % 1600 + 1600) % 1600;
       if (x < W) ctx.fillRect(x, sy, sr, sr);
@@ -644,20 +865,135 @@
       ctx.beginPath(); ctx.arc(x - 2, o.y - 2, o.r * 0.3, 0, Math.PI * 2); ctx.fill();
     }
 
+    for (const it of r.items) {
+      const x = it.x - cam;
+      if (x < -30 || x > W + 30) continue;
+      const P = POWERS[it.kind];
+      const y = it.y + Math.sin(t * 4 + it.x) * 3;
+      ctx.fillStyle = P.color + '38';
+      ctx.beginPath(); ctx.arc(x, y, it.r * 1.8, 0, Math.PI * 2); ctx.fill();
+      ctx.fillStyle = '#0d0a22';
+      ctx.strokeStyle = P.color;
+      ctx.lineWidth = 3;
+      ctx.beginPath(); ctx.arc(x, y, it.r, 0, Math.PI * 2); ctx.fill(); ctx.stroke();
+      drawIcon(it.kind, x, y, 1);
+    }
+
     for (const o of r.obstacles) if (o.x - cam < W + 60 && o.x + o.w - cam > -60) drawObstacle(r, o, t);
 
-    if (r.alive || performance.now() - r.deathTime < 120) drawPlayer(r, t);
+    if (r.alive || performance.now() - r.deathTime < 120) {
+      const PX = r.view.PX, p = r.player;
+      if (r.magnetT > 0) {
+        ctx.save();
+        ctx.setLineDash([4, 7]);
+        ctx.lineDashOffset = -t * 30;
+        ctx.strokeStyle = 'rgba(248,113,113,.6)';
+        ctx.lineWidth = 2;
+        ctx.beginPath(); ctx.arc(PX + PW / 2, p.y + PH / 2, 40, 0, Math.PI * 2); ctx.stroke();
+        ctx.restore();
+      }
+      if (r.invulnT > 0 && Math.floor(t * 20) % 2) ctx.globalAlpha = 0.45;
+      drawPlayer(r, t);
+      ctx.globalAlpha = 1;
+      if (r.shield) {
+        const rad = 31 + Math.sin(t * 5) * 1.5;
+        ctx.fillStyle = 'rgba(96,165,250,.14)';
+        ctx.strokeStyle = 'rgba(147,197,253,.85)';
+        ctx.lineWidth = 2;
+        ctx.beginPath(); ctx.arc(PX + PW / 2, p.y + PH / 2 - 3, rad, 0, Math.PI * 2); ctx.fill(); ctx.stroke();
+      }
+    }
 
     for (const q of r.particles) {
       ctx.globalAlpha = Math.max(0, q.life / q.max);
       ctx.fillStyle = q.color;
       ctx.fillRect(q.x - cam, q.y, q.size, q.size);
     }
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.lineJoin = 'round';
+    for (const q of r.popups) {
+      ctx.globalAlpha = Math.min(1, Math.max(0, q.life / q.max) * 1.6);
+      ctx.font = `700 ${q.size}px ${FONT}`;
+      ctx.lineWidth = 4;
+      ctx.strokeStyle = 'rgba(13,10,34,.7)';
+      ctx.strokeText(q.text, q.x - cam, q.y);
+      ctx.fillStyle = q.color;
+      ctx.fillText(q.text, q.x - cam, q.y);
+    }
+    ctx.textBaseline = 'alphabetic';
     ctx.globalAlpha = 1;
     ctx.restore();
   }
 
-  const FONT = "'Fredoka', ui-rounded, 'Segoe UI', system-ui, sans-serif";
+  function drawIcon(kind, x, y, s) {
+    const col = POWERS[kind].color;
+    if (kind === 'shield') {
+      ctx.fillStyle = col;
+      ctx.beginPath();
+      ctx.moveTo(x, y - 8 * s); ctx.lineTo(x + 7 * s, y - 5 * s); ctx.lineTo(x + 6 * s, y + 2 * s);
+      ctx.lineTo(x, y + 8 * s); ctx.lineTo(x - 6 * s, y + 2 * s); ctx.lineTo(x - 7 * s, y - 5 * s);
+      ctx.closePath(); ctx.fill();
+    } else if (kind === 'magnet') {
+      ctx.strokeStyle = col;
+      ctx.lineWidth = 4 * s;
+      ctx.beginPath();
+      ctx.moveTo(x - 5 * s, y - 7 * s); ctx.lineTo(x - 5 * s, y);
+      ctx.arc(x, y, 5 * s, Math.PI, 0, true);
+      ctx.lineTo(x + 5 * s, y - 7 * s);
+      ctx.stroke();
+      ctx.fillStyle = '#e5e7eb';
+      ctx.fillRect(x - 7 * s, y - 9 * s, 4 * s, 3 * s);
+      ctx.fillRect(x + 3 * s, y - 9 * s, 4 * s, 3 * s);
+    } else {
+      ctx.fillStyle = col;
+      ctx.font = `700 ${Math.round(13 * s)}px ${FONT}`;
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+      ctx.fillText('2×', x, y + 1);
+      ctx.textBaseline = 'alphabetic';
+    }
+  }
+
+  // Active power-ups (top centre of the lane) and milestone banner.
+  function drawEffects(r, t) {
+    const W = r.view.W;
+    const active = [];
+    if (r.shield) active.push(['shield', 1]);
+    if (r.magnetT > 0) active.push(['magnet', r.magnetT / POWERS.magnet.time]);
+    if (r.doubleT > 0) active.push(['double', r.doubleT / POWERS.double.time]);
+    active.forEach(([kind, frac], i) => {
+      const x = W / 2 - ((active.length - 1) * 44) / 2 + i * 44;
+      const y = 30;
+      ctx.fillStyle = 'rgba(13,10,34,.7)';
+      ctx.beginPath(); ctx.arc(x, y, 18, 0, Math.PI * 2); ctx.fill();
+      ctx.strokeStyle = POWERS[kind].color;
+      ctx.lineWidth = 3;
+      ctx.beginPath(); ctx.arc(x, y, 18, -Math.PI / 2, -Math.PI / 2 + Math.PI * 2 * frac); ctx.stroke();
+      drawIcon(kind, x, y, 1);
+    });
+    if (r.banner) {
+      const b = r.banner;
+      const age = b.max - b.life;
+      const pop = age < 0.18 ? 0.6 + age / 0.18 * 0.5 : 1.1 - Math.min(0.1, (age - 0.18));
+      ctx.save();
+      ctx.globalAlpha = Math.min(1, b.life / 0.35);
+      ctx.translate(W / 2, H * 0.34);
+      ctx.scale(pop, pop);
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+      ctx.font = `700 52px ${FONT}`;
+      ctx.lineWidth = 7;
+      ctx.lineJoin = 'round';
+      ctx.strokeStyle = 'rgba(13,10,34,.75)';
+      ctx.strokeText(b.text, 0, 0);
+      ctx.fillStyle = '#fbbf24';
+      ctx.fillText(b.text, 0, 0);
+      ctx.restore();
+    }
+  }
+
+  const FONT = "ui-rounded, system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif"; // device fonts only
 
   function drawLaneHud(r, i) {
     const W = r.view.W;
@@ -712,6 +1048,7 @@
       ctx.rect(0, 0, v.W, H);
       ctx.clip();
       drawWorld(r, t);
+      drawEffects(r, t);
       if (mode === 'versus') {
         drawLaneHud(r, i);
         if (state === 'countdown' || (state === 'paused' && pausedFrom === 'countdown')) drawControlsHint(r, i);
@@ -779,9 +1116,9 @@
       const [s1, s2] = runs.map(scoreOf);
       const head = s1 === s2 ? `We tied at ${s1.toLocaleString()}` :
         `${s1 > s2 ? 'Player 1' : 'Player 2'} won ${Math.max(s1, s2).toLocaleString()} to ${Math.min(s1, s2).toLocaleString()}`;
-      text = `${head} in a 2-player race on Shafkat Runner 🤖🏙️ Challenge a friend!\n${url}`;
+      text = `${head} in a 2-player race on Shafkat Runner (${LEVELS[level].label}) Challenge a friend!\n${url}`;
     } else {
-      text = `I scored ${scoreOf(runs[0]).toLocaleString()} on Shafkat Runner 🤖🏙️ Can you beat me?\n${url}`;
+      text = `I scored ${scoreOf(runs[0]).toLocaleString()} on Shafkat Runner in ${LEVELS[level].label} mode Can you beat me?\n${url}`;
     }
     if (navigator.share && matchMedia('(pointer: coarse)').matches) {
       try { await navigator.share({ text }); return; } catch (e) { if (e && e.name === 'AbortError') return; }
@@ -855,6 +1192,16 @@
   window.addEventListener('pointercancel', endPointer);
   ui.game.addEventListener('contextmenu', (e) => e.preventDefault());
 
+  function setLevel(lv) {
+    if (!LEVELS[lv]) return;
+    level = lv;
+    store.set('level', lv);
+    best = bestFor(lv);
+    ui.best.textContent = best.toLocaleString();
+    ui.levelBtns.forEach((b) => b.setAttribute('aria-checked', String(b.dataset.level === lv)));
+  }
+  ui.levelBtns.forEach((b) => b.addEventListener('click', () => setLevel(b.dataset.level)));
+
   ui.soloBtn.addEventListener('click', () => { audio(); startGame('solo'); });
   ui.versusBtn.addEventListener('click', () => { audio(); startGame('versus'); });
   ui.againBtn.addEventListener('click', () => { audio(); startGame(mode); });
@@ -874,22 +1221,28 @@
   if (new URLSearchParams(location.search).has('debug')) {
     window.__game = {
       get: () => ({
-        state, mode, tally: [...tally],
+        state, mode, level, tally: [...tally],
         runs: runs.map((r) => ({
           alive: r.alive, cam: r.cam, speed: r.speed, W: r.view.W, PX: r.view.PX, player: r.player,
+          items: r.items, shield: r.shield, magnetT: r.magnetT, doubleT: r.doubleT, combo: r.combo, bonus: r.bonus,
+          look: r.look.id || r.look.name, orbs: r.orbs.length,
+          padCount: r.padCount || 0, powerCount: r.powerCount || 0, nextMilestone: r.nextMilestone, banner: !!r.banner,
           obstacles: r.obstacles, segments: r.segments, segStart: r.segStart, score: scoreOf(r),
         })),
       }),
       press: (i) => press(runs[i]),
       release: (i) => release(runs[i]),
       kill: (i) => { if (runs[i] && runs[i].alive) die(runs[i]); },
+      setLevel,
+      give: (i, k) => { const r = runs[i]; if (k === 'shield') r.shield = true; else if (k === 'magnet') r.magnetT = 8; else r.doubleT = 8; },
     };
   }
 
   // ---------- Start ----------
   resize();
-  runs = [makeRun(randomSeed(), views[0], LOOKS[0])];
-  ui.best.textContent = best.toLocaleString();
+  renderSkins();
+  runs = [makeRun(randomSeed(), views[0], p1Look())];
+  setLevel(level);
   ui.pauseBtn.disabled = true;
   setMuted(muted);
   requestAnimationFrame(frame);
